@@ -20,7 +20,8 @@
     "baseUrl": "./",
     "paths": {
       "@nestjs/*": ["src/@nestjs/*"]
-    }
+    },
+    "typeRoots": ["src/typings"]
   },
   "include": ["src/**/*.ts"]
 }

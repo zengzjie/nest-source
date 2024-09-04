@@ -29,6 +29,9 @@ const NAMESPACE_MODULE_METADATA = "__namespace_module__";
 const CATCH_WATERMARK = "__catch__";
 const FILTER_CATCH_EXCEPTIONS = "__filterCatchExceptions__";
 const EXCEPTION_FILTERS_METADATA = "__exceptionFilters__";
+const INTERCEPTORS_METADATA = "__interceptors__";
+const PIPES_METADATA = "__pipes__";
+const GUARDS_METADATA = "__guards__";
 
 export {
   MODULE_METADATA,
@@ -51,5 +54,8 @@ export {
   GLOBAL_MODULE_METADATA,
   CATCH_WATERMARK,
   FILTER_CATCH_EXCEPTIONS,
-  EXCEPTION_FILTERS_METADATA
+  EXCEPTION_FILTERS_METADATA,
+  INTERCEPTORS_METADATA,
+  PIPES_METADATA,
+  GUARDS_METADATA
 };

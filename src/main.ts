@@ -6,7 +6,7 @@ import { AppModule } from "./app.module";
 import session from "express-session";
 // 导入 express 模块
 import express from "express";
-import { Logger } from "@nestjs/common";
+import { Logger, ValidationPipe } from "@nestjs/common";
 import { CustomExceptionFilter } from "./filter/custom-exception.filter";
 
 const PORT = process.env.PORT || 3000;
@@ -17,6 +17,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   // app.useGlobalFilters(CustomExceptionFilter);
+  // app.useGlobalPipes(new ValidationPipe());
   // 使用 express-session 中间件来管理会话
   app.use(
     session({

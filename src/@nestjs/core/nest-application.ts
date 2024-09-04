@@ -9,6 +9,7 @@ import { Logger } from "../common/services/logger";
 import {
   CustomParamFactory,
   defineNameSpaceModule,
+  ForbiddenException,
   GlobalHttpExceptionFilter,
   isEmptyObject,
   isFunction,
@@ -25,12 +26,14 @@ import {
   EXCEPTION_FILTERS_METADATA,
   FILTER_CATCH_EXCEPTIONS,
   GLOBAL_MODULE_METADATA,
+  GUARDS_METADATA,
   HEADER_METADATA,
   INJECTABLE_WATERMARK,
   NAMESPACE_MODULE_METADATA,
   PARAMETERS_METADATA,
   PARAMETER_CONSTANT,
   PARAMTYPES_METADATA,
+  PIPES_METADATA,
   PROPERTY_DEPS_METADATA,
   ROUTE_ARGS_METADATA,
   SELF_DECLARED_DEPS_METADATA,
@@ -59,11 +62,18 @@ import {
 import { ModuleMetadata } from "@nestjs/common";
 import { DynamicModule } from "@nestjs/common";
 import { ForwardReference } from "@nestjs/common";
-import { HttpArgumentsHost, ParamType, RouteInfo } from "@nestjs/common/interfaces";
+import {
+  CanActivate,
+  ExecutionContext,
+  HttpArgumentsHost,
+  ParamType,
+  RouteInfo,
+} from "@nestjs/common/interfaces";
 import { ArgumentsHost } from "@nestjs/common";
 import { ClassProvider } from "@nestjs/common";
-import { APP_FILTER } from "./constants";
+import { APP_FILTER, APP_GUARD, APP_PIPE } from "./constants";
 import { PipeTransform } from "@nestjs/common";
+import { Reflector } from "./reflector";
 
 export class NestApplication {
   // 在它的内部私有化一个 Express 实例
@@ -98,6 +108,10 @@ export class NestApplication {
   // 全局异常过滤器
   private readonly defaultGlobalHttpExceptionFilter =
     new GlobalHttpExceptionFilter();
+  // 收集全局管道
+  private readonly globalPipes = [];
+  // 收集全局守卫
+  private readonly globalGuards = [];
   constructor(protected readonly module: Type) {
     // 用来把 JSON 格式的请求体对象放在 req.body 上
     this.app.use(express.json());
@@ -107,6 +121,14 @@ export class NestApplication {
 
   useGlobalFilters(filter) {
     this.globalFilters.push(filter);
+  }
+
+  useGlobalPipes(pipe) {
+    this.globalPipes.push(pipe);
+  }
+
+  useGlobalGuards(guard) {
+    this.globalGuards.push(guard);
   }
 
   private initMiddlewares() {
@@ -419,6 +441,12 @@ export class NestApplication {
         if (provider.provide === APP_FILTER) {
           this.useGlobalFilters(classInstance);
         }
+        if (provider.provide === APP_PIPE) {
+          this.useGlobalPipes(classInstance);
+        }
+        if (provider.provide === APP_GUARD) {
+          this.useGlobalGuards(classInstance);
+        }
         // 把 provider 的 token 和类实例保存到 providersMap 中
         this.providerInstances.set(provider.provide, classInstance);
         providers.add(provider.provide);
@@ -561,8 +589,45 @@ export class NestApplication {
     });
   }
 
+  /**
+   * @description: 获取守卫实例
+   * @param {*} guard
+   * @return {*}
+   */
+  private getGuardsInstance(guard) {
+    if (guard instanceof Function) {
+      const dependencies = this.resolveDependencies(guard);
+      return new guard(...dependencies);
+    }
+    return guard;
+  }
+
+  /**
+   * @description: 校验守卫
+   * @param {*} guards
+   * @param {*} context
+   * @return {*}
+   */
+  private async callGuards(guards, context) {
+    for (let guard of guards) {
+      const instance = this.getGuardsInstance(guard) as CanActivate;
+      if (instance) {
+        const validateGuard = await instance.canActivate(context);
+        if (!validateGuard) {
+          throw new ForbiddenException("Forbidden resource");
+        }
+      }
+    }
+  }
+
+  private initDefaultProviders() {
+    this.addProvider(Reflector, this.module, true);
+  }
+
   // 配置初始化工作
   private async initController(module) {
+    // 全局使用的依赖初始化注入
+    this.initDefaultProviders();
     // 取出模块里所有的控制器，然后实例化它们做好路由配置
     const controllers: Type[] =
       Reflect.getMetadata(MODULE_METADATA.CONTROLLERS, module) ?? [];
@@ -587,8 +652,17 @@ export class NestApplication {
       // 获取控制器上的过滤器
       const controllerFilters =
         Reflect.getMetadata(EXCEPTION_FILTERS_METADATA, Controller) ?? [];
+      const controllerPipes =
+        Reflect.getMetadata(PIPES_METADATA, Controller) ?? [];
+      // 获取控制器上的守卫
+      const controllerGuards =
+        Reflect.getMetadata(GUARDS_METADATA, Controller) ?? [];
       // 把控制器过滤器放到模块的命名空间中
       defineNameSpaceModule(this.module, controllerFilters);
+      // 把控制器管道放到模块的命名空间中
+      defineNameSpaceModule(this.module, controllerPipes);
+      // 把控制器守卫放到模块的命名空间中
+      defineNameSpaceModule(this.module, controllerGuards);
       // 开始解析路由
       Logger.log(`${Controller.name} {${prefix}}:`, "RoutesResolver");
 
@@ -628,8 +702,16 @@ export class NestApplication {
         // 获取方法上的过滤器
         const methodFilters =
           Reflect.getMetadata(EXCEPTION_FILTERS_METADATA, method) ?? [];
+        // 获取方法上的管道
+        const methodPipes = Reflect.getMetadata(PIPES_METADATA, method) ?? [];
+        // 获取方法上的守卫
+        const methodGuards = Reflect.getMetadata(GUARDS_METADATA, method) ?? [];
         // 把方法过滤器放到模块的命名空间中
         defineNameSpaceModule(this.module, methodFilters);
+        // 把方法管道放到模块的命名空间中
+        defineNameSpaceModule(this.module, methodPipes);
+        // 把方法守卫放到模块的命名空间中
+        defineNameSpaceModule(this.module, methodGuards);
 
         // 拼接完整请求路径
         const routePath = path.posix.join("/", prefix, pathMetadata);
@@ -648,14 +730,24 @@ export class NestApplication {
                 getNext: <NextFunction>() => next as NextFunction,
               }),
             };
+            const context = {
+              ...host,
+              getClass: () => Controller,
+              getHandler: () => method,
+            };
+
             try {
+              // 在执行完中间件逻辑后校验守卫
+              await this.callGuards([...this.globalGuards, ...controllerGuards, ...methodGuards], context);
               const args = await this.resolveParams(
                 controllerPrototype,
                 methodName,
                 req,
                 res,
                 next,
-                host
+                host,
+                controllerPipes,
+                methodPipes
               );
 
               // 设置响应头
@@ -742,7 +834,7 @@ export class NestApplication {
     ];
 
     for (let filter of allFilters) {
-      console.log(filter, "filter");
+      console.log(filter, "callExceptionFilters");
       const filterInstance = this.getFilterInstance(filter);
       const catchWatermark = Reflect.getMetadata(
         CATCH_WATERMARK,
@@ -755,6 +847,8 @@ export class NestApplication {
         ) ?? [];
 
       // catchWatermark 为true 且 filterCatchExceptions 有值则代表着过滤器是特殊的异常过滤器，只会处理 filterCatchExceptions 里的异常
+
+      // ❗️TODO: 这里调试一下看看单独使用了 @Catch() 和 @Catch(Exception) 到底是传染性的执行还是说只执行特定的异常
       if (
         catchWatermark ||
         (filterCatchExceptions?.length > 0 &&
@@ -790,7 +884,9 @@ export class NestApplication {
     req: ExpressRequest,
     res: ExpressResponse,
     next: NextFunction,
-    host
+    host,
+    controllerPipes: PipeTransform[],
+    methodPipes: PipeTransform[]
   ) {
     const mergeParams = [];
     const customParamsFactoryMetadata = (Reflect.getMetadata(
@@ -816,47 +912,51 @@ export class NestApplication {
       methodName
     ) ?? []) as ParametersMetadata[];
 
-    console.log(paramsMetadata, "paramsMetadata");
-    
-
     // 先按照参数的索引排序（[ { index: 0, factoryName: 'Req' }, undefined 这是没有装饰器修饰的, { index: 1, factoryName: 'Request' } ]）
     const parameterResult = paramsMetadata
       // .filter(Boolean)
       .map((paramMetadata) => {
         const { factoryName, extraParams, index, pipes } = paramMetadata;
+        const mergePipes = [
+          ...this.globalPipes,
+          ...controllerPipes,
+          ...methodPipes,
+          ...pipes,
+        ];
         switch (factoryName) {
           case PARAMETER_CONSTANT.REQUEST:
           case PARAMETER_CONSTANT.REQ:
             // [req, ...args]
             return {
               index,
-              pipes,
+              pipes: mergePipes,
               result: req,
             };
           case PARAMETER_CONSTANT.RESPONSE:
           case PARAMETER_CONSTANT.RES:
             return {
               index,
-              pipes,
+              pipes: mergePipes,
               result: res,
             };
           case PARAMETER_CONSTANT.NEXT:
             return {
               index,
-              pipes,
+              pipes: mergePipes,
               result: next,
             };
           case PARAMETER_CONSTANT.QUERY:
             return extraParams.queryKey
               ? {
                   index,
-                  pipes,
+                  pipes: mergePipes,
                   type: PARAMETER_CONSTANT.QUERY,
+                  data: extraParams.queryKey,
                   result: req.query[extraParams.queryKey],
                 }
               : {
                   index,
-                  pipes,
+                  pipes: mergePipes,
                   type: PARAMETER_CONSTANT.QUERY,
                   result: req.query,
                 };
@@ -864,37 +964,38 @@ export class NestApplication {
             return extraParams.headerKey
               ? {
                   index,
-                  pipes,
+                  pipes: mergePipes,
                   result: req.headers[extraParams.headerKey],
                 }
               : {
                   index,
-                  pipes,
+                  pipes: mergePipes,
                   result: req.headers,
                 };
           case PARAMETER_CONSTANT.IP:
             return {
               index,
-              pipes,
+              pipes: mergePipes,
               result: req.ip,
             };
           case PARAMETER_CONSTANT.SESSION:
             return {
               index,
-              pipes,
+              pipes: mergePipes,
               result: req.session,
             };
           case PARAMETER_CONSTANT.PARAM:
             return extraParams.paramKey
               ? {
                   index,
-                  pipes,
+                  pipes: mergePipes,
                   type: PARAMETER_CONSTANT.PARAM,
+                  data: extraParams.paramKey,
                   result: req.params[extraParams.paramKey],
                 }
               : {
                   index,
-                  pipes,
+                  pipes: mergePipes,
                   type: PARAMETER_CONSTANT.PARAM,
                   result: req.params,
                 };
@@ -902,13 +1003,14 @@ export class NestApplication {
             return extraParams.bodyKey
               ? {
                   index,
-                  pipes,
+                  pipes: mergePipes,
                   type: PARAMETER_CONSTANT.BODY,
+                  data: extraParams.bodyKey,
                   result: req.body[extraParams.bodyKey],
                 }
               : {
                   index,
-                  pipes,
+                  pipes: mergePipes,
                   type: PARAMETER_CONSTANT.BODY,
                   result: req.body,
                 };
@@ -918,31 +1020,40 @@ export class NestApplication {
             return null;
         }
       });
-      
-    const sortedParams = [...mergeParams, ...parameterResult]?.sort(
-      (a, b) => a.index - b.index
-    ).filter(Boolean);
-    
 
     if (isEmptyObject(customParamsFactoryMetadata)) {
-      const paramtypes = Reflect.getMetadata(PARAMTYPES_METADATA, example, methodName);
-      
-      return Promise.all(parameterResult.map(async (param) => {
-        let result: any;
-        
-        for (let pipe of param.pipes) {
-          if (isObject(result) && typeof result.then === 'function') {
-            result = await result;
+      // 获取方法的参数类型
+      const paramtypes = Reflect.getMetadata(
+        PARAMTYPES_METADATA,
+        example,
+        methodName
+      );
+
+      // 通过 Promise.all 来并发处理方法的参数装饰器结果
+      return Promise.all(
+        parameterResult.map(async (param) => {
+          let result: any;
+
+          // 如果参数装饰器中有 pipes, 则需要先将参数装饰器结果值传入管道中依次处理
+          for (let pipe of param.pipes) {
+            if (isObject(result) && typeof result.then === "function") {
+              result = await result;
+            }
+            const pipeInstance: PipeTransform = this.getPipeInstance(pipe);
+            // 传入管道接口方法 transform 需要的参数（value, metadata）,得到最终的处理结果并返回到方法的参数中
+            result = pipeInstance.transform(result ?? param.result, {
+              type: (param.type?.toLocaleLowerCase() as ParamType) ?? "custom",
+              metatype: paramtypes[param.index],
+              data: param.data ?? void 0,
+            });
           }
-          const pipeInstance: PipeTransform = this.getPipeInstance(pipe);
-          result = pipeInstance.transform(result ?? param.result, {
-            type: (param.type?.toLocaleLowerCase() as ParamType) ?? "custom",
-            metatype: paramtypes[param.index],
-          });
-        }
-        return result;
-      }));
+          return result;
+        })
+      );
     } else {
+      const sortedParams = [...mergeParams, ...parameterResult]
+        ?.sort((a, b) => a.index - b.index)
+        .filter(Boolean);
       return sortedParams?.map((param) => param?.result);
     }
   }

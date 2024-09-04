@@ -7,8 +7,7 @@ export interface ExecutionContext extends ArgumentsHost {
    */
   getClass<T = any>(): Type<T>;
   /**
-   * Returns a reference to the handler (method) that will be invoked next in the
-   * request pipeline.
+   * 返回对请求管道中下一个将被调用的处理程序（方法）的引用
    */
   getHandler(): Function;
 }

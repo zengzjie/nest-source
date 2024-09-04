@@ -14,8 +14,6 @@ import { AppService } from "src/app.service";
 export class CustomExceptionFilter implements ExceptionFilter {
   constructor(private readonly appServer: AppService) {}
   catch(exception: any, host: ArgumentsHost) {
-    console.log(this.appServer.getAppService(), "appName ===> appName");
-    
     const ctx = host.switchToHttp();
     const request = ctx.getRequest<Request>();
     const response = ctx.getResponse<Response>();

@@ -3,8 +3,12 @@ import { ArgumentMetadata, PipeTransform } from "../interfaces";
 import { isNil } from "../utils/shared.util";
 import { validate as uuidValidate, version as uuidVersion } from 'uuid';
 
+export interface ParseUUIDPipeOptions {
+  version?: '3' | '4' | '5' | '7';
+}
+
 export class ParseUUIDPipe implements PipeTransform<string> {
-  constructor(private readonly version: number = 4) {}
+  constructor(private readonly options: ParseUUIDPipeOptions) {}
   async transform(uuid: string, metadata: ArgumentMetadata) {
     if (isNil(uuid)) {
       return uuid;
@@ -17,6 +21,6 @@ export class ParseUUIDPipe implements PipeTransform<string> {
   }
 
   private uuidValidateAndVersion(uuid: string): boolean {
-    return uuidValidate(uuid) && uuidVersion(uuid) === this.version;
+    return uuidValidate(uuid) && uuidVersion(uuid) === this.options.version;
   }
 }

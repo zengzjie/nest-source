@@ -33,5 +33,6 @@ export {
   NestMiddleware,
   MiddlewareConsumer,
   ArgumentsHost,
-  ExceptionFilter
+  ExceptionFilter,
+  CanActivate
 } from "./interfaces";

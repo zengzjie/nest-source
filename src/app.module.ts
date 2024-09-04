@@ -3,6 +3,7 @@ import {
   Module,
   NestModule,
   RequestMethod,
+  ValidationPipe,
 } from "@nestjs/common";
 import { AppController } from "./app.controller";
 import { UserController } from "./user/user.controller";
@@ -12,8 +13,11 @@ import { CreateDynamicModule } from "./dynamicModule/dynamic.module";
 import { DogsService } from "./cats/cats.service";
 import { LoggerMiddleware } from "./middleware/logger.middleware";
 import { AppService } from "./app.service";
-import { APP_FILTER } from "@nestjs/core";
+import { APP_FILTER, APP_GUARD, APP_PIPE } from "@nestjs/core";
 import { CustomExceptionFilter } from "./filter/custom-exception.filter";
+import { AuthMiddleware } from "./auth/auth.middleware";
+import { AuthGuard } from "./auth/auth.guard";
+import { CreateDecoratorAuth } from "./auth/create-decorator-auth.guard";
 
 function LoggerMiddleware1 (req, res, next) {
   console.log("LoggerMiddleware1 before");
@@ -38,13 +42,21 @@ function LoggerMiddleware2 (req, res, next) {
     {
       provide: APP_FILTER,
       useClass: CustomExceptionFilter
+    },
+    {
+      provide: APP_PIPE,
+      useClass: ValidationPipe
+    },
+    {
+      provide: APP_GUARD,
+      useClass: CreateDecoratorAuth
     }
   ],
 })
 class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer
-      .apply(LoggerMiddleware)
+      .apply(LoggerMiddleware, AuthMiddleware)
       // forRoutes 可以传入多个参数，表示多个路由前缀
       // .forRoutes("config");
       // .forRoutes({ path: "config", method: RequestMethod.POST });

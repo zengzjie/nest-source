@@ -13,6 +13,8 @@ import {
   UseFilters,
   ParseUUIDPipe,
   ParseEnumPipe,
+  UsePipes,
+  UseGuards,
 } from "@nestjs/common";
 import {
   CatsService,
@@ -25,6 +27,13 @@ import { CoreService } from "./core/core.service";
 import { CustomExceptionFilter } from "./filter/custom-exception.filter";
 import { Param } from "@nestjs/common";
 import { Query } from "@nestjs/common";
+import { Body } from "@nestjs/common";
+import { CreateCatDto, createCatSchema } from "./zod/create-cat.dto";
+import { ZodValidationPipe } from "./zod/zod-validation.pipe";
+import { CreateUserDto } from "./cats/create-user.dto";
+import { Roles as SetRoles } from "./user/role";
+import { AuthGuard } from "./auth/auth.guard";
+import { CreateDecoratorRole } from "./user/create-decorator-role";
 
 enum Roles {
   USER = "user",
@@ -116,8 +125,41 @@ class AppController {
   }
 
   @Get("pipe/:id/:role")
-  handlePipe(@Param("id", ParseIntPipe, CustomPipe) id: number, @Param('role', new ParseEnumPipe(Roles)) role: string, @Query('uuid', new ParseUUIDPipe(1)) uuid: string): string {
-    return `This is a pipe ${id}` + ` UUID is: 🪪 ${uuid}` + `Current Role is: ${role}`;
+  handlePipe(
+    @Param("id", ParseIntPipe, CustomPipe) id: number,
+    @Param("role", new ParseEnumPipe(Roles)) role: string,
+    @Query(
+      "uuid",
+      new ParseUUIDPipe({
+        version: "3",
+      })
+    )
+    uuid: string
+  ): string {
+    return (
+      `This is a pipe ${id}` +
+      ` UUID is: 🪪 ${uuid}` +
+      `Current Role is: ${role}`
+    );
+  }
+
+  @Post("zodCats")
+  @UsePipes(new ZodValidationPipe(createCatSchema))
+  handleZodiac(@Body() createCatDto: CreateCatDto): string {
+    return "this action adds a new cat";
+  }
+
+  @Post("createUser")
+  handleCreateUser(@Body() createUserDto: CreateUserDto): string {
+    return "this action adds a new user";
+  }
+
+  @Get("guardsRole")
+  // @UseGuards(AuthGuard)
+  // @SetRoles("admin", "fairy")
+  @CreateDecoratorRole(["admin", "fairy"])
+  handleGuardsRole(@Query("role") role: string): string {
+    return `Access is only granted with specific roles: ${role}`;
   }
 }
 

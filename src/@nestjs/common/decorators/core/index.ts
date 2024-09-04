@@ -6,3 +6,6 @@ export * from "./Injectable.decorator";
 export * from "./Inject.decorator";
 export * from './catch.decorator';
 export * from './exception-filters.decorator';
+export * from './use-pipes.decorator';
+export * from './use-guards.decorator';
+export * from './set-metadata.decorator';
