@@ -34,5 +34,7 @@ export {
   MiddlewareConsumer,
   ArgumentsHost,
   ExceptionFilter,
-  CanActivate
+  CanActivate,
+  CallHandler,
+  NestInterceptor
 } from "./interfaces";

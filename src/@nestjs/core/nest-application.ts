@@ -29,6 +29,7 @@ import {
   GUARDS_METADATA,
   HEADER_METADATA,
   INJECTABLE_WATERMARK,
+  INTERCEPTORS_METADATA,
   NAMESPACE_MODULE_METADATA,
   PARAMETERS_METADATA,
   PARAMETER_CONSTANT,
@@ -71,9 +72,10 @@ import {
 } from "@nestjs/common/interfaces";
 import { ArgumentsHost } from "@nestjs/common";
 import { ClassProvider } from "@nestjs/common";
-import { APP_FILTER, APP_GUARD, APP_PIPE } from "./constants";
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from "./constants";
 import { PipeTransform } from "@nestjs/common";
 import { Reflector } from "./reflector";
+import { from, mergeMap, Observable, of } from "rxjs";
 
 export class NestApplication {
   // 在它的内部私有化一个 Express 实例
@@ -112,6 +114,8 @@ export class NestApplication {
   private readonly globalPipes = [];
   // 收集全局守卫
   private readonly globalGuards = [];
+  // 收集全局拦截器
+  private readonly globalInterceptors = [];
   constructor(protected readonly module: Type) {
     // 用来把 JSON 格式的请求体对象放在 req.body 上
     this.app.use(express.json());
@@ -129,6 +133,9 @@ export class NestApplication {
 
   useGlobalGuards(guard) {
     this.globalGuards.push(guard);
+  }
+  useGlobalInterceptors(interceptor) {
+    this.globalInterceptors.push(interceptor);
   }
 
   private initMiddlewares() {
@@ -413,6 +420,7 @@ export class NestApplication {
 
     // 为了避免重复注册，这里需要判断一下是否已经注册过了
     let token;
+    // 需要排除掉 APP_FILTER, APP_PIPE, APP_GUARD, APP_INTERCEPTOR 这几个特殊的 token
     if (
       isClassProvider(provider) ||
       isValueProvider(provider) ||
@@ -424,7 +432,9 @@ export class NestApplication {
       token = provider;
     }
     // 如果实例池里已经有此 token 对应的实例了
-    if (this.providerInstances.has(token)) {
+    if (this.providerInstances.has(token) && !["APP_FILTER", "APP_PIPE", "APP_GUARD", "APP_INTERCEPTOR"].includes(
+      (provider as ClassProvider).provide as string
+    )) {
       // 如果 providers 里已经有这个 token 了，则无需再次注册
       if (!providers.has(token)) {
         providers.add(token);
@@ -446,6 +456,9 @@ export class NestApplication {
         }
         if (provider.provide === APP_GUARD) {
           this.useGlobalGuards(classInstance);
+        }
+        if (provider.provide === APP_INTERCEPTOR) {
+          this.useGlobalInterceptors(classInstance);
         }
         // 把 provider 的 token 和类实例保存到 providersMap 中
         this.providerInstances.set(provider.provide, classInstance);
@@ -528,6 +541,7 @@ export class NestApplication {
 
     console.log(
       this.moduleProviders,
+      this.globalProviders,
       token,
       "this.moduleProviders ======> this.moduleProviders"
     );
@@ -620,6 +634,57 @@ export class NestApplication {
     }
   }
 
+  /**
+   * @description: 获取拦截器实例
+   * @param {*} guard
+   * @return {*}
+   */
+  private getInterceptorInstance(interceptor) {
+    if (interceptor instanceof Function) {
+      const dependencies = this.resolveDependencies(interceptor);
+      return new interceptor(...dependencies);
+    }
+    return interceptor;
+  }
+
+  /**
+   * @description: 执行所有的拦截器（🧅 利用的是洋葱模型的顺序来执行）
+   * @param {*} controller
+   * @param {*} method
+   * @param {*} args
+   * @param {*} interceptors
+   * @param {*} context
+   * @return {*}
+   */
+  private async callInterceptors(
+    controller,
+    method,
+    args,
+    interceptors,
+    context
+  ) {
+    const nextCallback = (i = 0): Observable<any> => {
+      if (i >= interceptors.length) {
+        const result = method.call(controller, ...args) as
+          | Promise<string>
+          | string;
+        return result instanceof Promise ? from(result) : of(result);
+      }
+      const next = {
+        handle: () => nextCallback(i + 1),
+      };
+      const interceptor = interceptors[i];
+      const instance = this.getInterceptorInstance(interceptor);
+      const result = instance.intercept(context, next) as
+        | Observable<any>
+        | Promise<Observable<any>>;
+      return from(result).pipe(
+        mergeMap((value) => (value instanceof Observable ? value : of(value)))
+      );
+    };
+    return nextCallback();
+  }
+
   private initDefaultProviders() {
     this.addProvider(Reflector, this.module, true);
   }
@@ -657,12 +722,17 @@ export class NestApplication {
       // 获取控制器上的守卫
       const controllerGuards =
         Reflect.getMetadata(GUARDS_METADATA, Controller) ?? [];
+      // 获取控制器上的拦截器
+      const controllerInterceptors =
+        Reflect.getMetadata(INTERCEPTORS_METADATA, Controller) ?? [];
       // 把控制器过滤器放到模块的命名空间中
       defineNameSpaceModule(this.module, controllerFilters);
       // 把控制器管道放到模块的命名空间中
       defineNameSpaceModule(this.module, controllerPipes);
       // 把控制器守卫放到模块的命名空间中
       defineNameSpaceModule(this.module, controllerGuards);
+      // 把控制器拦截器放到模块的命名空间中
+      defineNameSpaceModule(this.module, controllerInterceptors);
       // 开始解析路由
       Logger.log(`${Controller.name} {${prefix}}:`, "RoutesResolver");
 
@@ -706,12 +776,34 @@ export class NestApplication {
         const methodPipes = Reflect.getMetadata(PIPES_METADATA, method) ?? [];
         // 获取方法上的守卫
         const methodGuards = Reflect.getMetadata(GUARDS_METADATA, method) ?? [];
+        // 获取方法上的拦截器
+        const methodInterceptors =
+          Reflect.getMetadata(INTERCEPTORS_METADATA, method) ?? [];
         // 把方法过滤器放到模块的命名空间中
         defineNameSpaceModule(this.module, methodFilters);
         // 把方法管道放到模块的命名空间中
         defineNameSpaceModule(this.module, methodPipes);
         // 把方法守卫放到模块的命名空间中
         defineNameSpaceModule(this.module, methodGuards);
+        // 把方法拦截器放到模块的命名空间中
+        defineNameSpaceModule(this.module, methodInterceptors);
+
+        const mergeFilters = [...controllerFilters, ...methodFilters];
+        const mergePipes = [
+          ...this.globalPipes,
+          ...controllerPipes,
+          ...methodPipes,
+        ];
+        const mergeGuards = [
+          ...this.globalGuards,
+          ...controllerGuards,
+          ...methodGuards,
+        ];
+        const mergeInterceptors = [
+          ...this.globalInterceptors,
+          ...controllerInterceptors,
+          ...methodInterceptors,
+        ];
 
         // 拼接完整请求路径
         const routePath = path.posix.join("/", prefix, pathMetadata);
@@ -738,57 +830,61 @@ export class NestApplication {
 
             try {
               // 在执行完中间件逻辑后校验守卫
-              await this.callGuards([...this.globalGuards, ...controllerGuards, ...methodGuards], context);
+              await this.callGuards(mergeGuards, context);
               const args = await this.resolveParams(
                 controllerPrototype,
                 methodName,
-                req,
-                res,
-                next,
-                host,
-                controllerPipes,
-                methodPipes
+                host as any,
+                mergePipes
               );
 
-              // 设置响应头
-              headerMetadata.forEach(({ name, value }) => {
-                res.setHeader(name, value);
+              (
+                await this.callInterceptors(
+                  controller,
+                  method,
+                  args,
+                  mergeInterceptors,
+                  context
+                )
+              ).subscribe({
+                next: (result) => {
+                  // 设置响应头
+                  headerMetadata.forEach(({ name, value }) => {
+                    res.setHeader(name, value);
+                  });
+                  // 执行路由处理函数，获取返回值
+                  // const result = method.call(controller, ...args);
+                  if (result?.url) {
+                    return res.redirect(result.statusCode || 302, result.url);
+                  }
+                  if (redirectUrl) {
+                    return res.redirect(redirectStatusCode || 302, redirectUrl);
+                  }
+                  // 如果有 HttpCode 的状态码，则设置响应状态码，否则 POST 请求默认返回 201
+                  if (httpCode) {
+                    res.statusCode = httpCode;
+                  } else if (httpMethod === "POST") {
+                    res.statusCode = 201;
+                  }
+                  // 判断 controller 原型上的 methodName 方法里有没有使用 Response，Res，Next 参数装饰器，如果用了任何一个则不发响应
+                  const responseMeta = this.getResponseMeta(
+                    controllerPrototype,
+                    methodName
+                  );
+
+                  // 如果没有使用 Response 或 Res 参数装饰器，或者使用了 Response，Res，Next 参数装饰器并且配置了 passthrough 为 true，则把返回值序列化发回给客户
+                  if (
+                    !responseMeta ||
+                    responseMeta.extraParams?.resConfiguration.passthrough
+                  ) {
+                    // 把返回值序列化发回给客户
+                    res.send(result);
+                  }
+                },
+                error: async error => await this.callExceptionFilters(error, host, mergeFilters)
               });
-              // 执行路由处理函数，获取返回值
-              const result = method.call(controller, ...args);
-              if (result?.url) {
-                return res.redirect(result.statusCode || 302, result.url);
-              }
-              if (redirectUrl) {
-                return res.redirect(redirectStatusCode || 302, redirectUrl);
-              }
-              // 如果有 HttpCode 的状态码，则设置响应状态码，否则 POST 请求默认返回 201
-              if (httpCode) {
-                res.statusCode = httpCode;
-              } else if (httpMethod === "POST") {
-                res.statusCode = 201;
-              }
-              // 判断 controller 原型上的 methodName 方法里有没有使用 Response，Res，Next 参数装饰器，如果用了任何一个则不发响应
-              const responseMeta = this.getResponseMeta(
-                controllerPrototype,
-                methodName
-              );
-
-              // 如果没有使用 Response 或 Res 参数装饰器，或者使用了 Response，Res，Next 参数装饰器并且配置了 passthrough 为 true，则把返回值序列化发回给客户
-              if (
-                !responseMeta ||
-                responseMeta.extraParams?.resConfiguration.passthrough
-              ) {
-                // 把返回值序列化发回给客户
-                res.send(result);
-              }
             } catch (error) {
-              await this.callExceptionFilters(
-                error,
-                host,
-                controllerFilters,
-                methodFilters
-              );
+              await this.callExceptionFilters(error, host, mergeFilters);
             }
           }
         );
@@ -821,14 +917,12 @@ export class NestApplication {
    * @description: 捕获异常并根据异常类型优先级来执行对应的异常过滤器
    * @param {*} error
    * @param {*} host
-   * @param {*} controllerFilters
-   * @param {*} methodFilters
+   * @param {*} mergeFilters
    * @return {*}
    */
-  private callExceptionFilters(error, host, controllerFilters, methodFilters) {
+  private callExceptionFilters(error, host, mergeFilters) {
     const allFilters = [
-      ...methodFilters,
-      ...controllerFilters,
+      ...mergeFilters,
       ...this.globalFilters,
       this.defaultGlobalHttpExceptionFilter,
     ];
@@ -881,13 +975,12 @@ export class NestApplication {
   private resolveParams(
     example,
     methodName,
-    req: ExpressRequest,
-    res: ExpressResponse,
-    next: NextFunction,
-    host,
-    controllerPipes: PipeTransform[],
-    methodPipes: PipeTransform[]
+    host: ArgumentsHost,
+    mergePipes: PipeTransform[]
   ) {
+    const req = host.switchToHttp().getRequest();
+    const res = host.switchToHttp().getResponse();
+    const next = host.switchToHttp().getNext();
     const mergeParams = [];
     const customParamsFactoryMetadata = (Reflect.getMetadata(
       ROUTE_ARGS_METADATA,
@@ -917,46 +1010,41 @@ export class NestApplication {
       // .filter(Boolean)
       .map((paramMetadata) => {
         const { factoryName, extraParams, index, pipes } = paramMetadata;
-        const mergePipes = [
-          ...this.globalPipes,
-          ...controllerPipes,
-          ...methodPipes,
-          ...pipes,
-        ];
+        const _mergePipes = [...mergePipes, ...pipes];
         switch (factoryName) {
           case PARAMETER_CONSTANT.REQUEST:
           case PARAMETER_CONSTANT.REQ:
             // [req, ...args]
             return {
               index,
-              pipes: mergePipes,
+              pipes: _mergePipes,
               result: req,
             };
           case PARAMETER_CONSTANT.RESPONSE:
           case PARAMETER_CONSTANT.RES:
             return {
               index,
-              pipes: mergePipes,
+              pipes: _mergePipes,
               result: res,
             };
           case PARAMETER_CONSTANT.NEXT:
             return {
               index,
-              pipes: mergePipes,
+              pipes: _mergePipes,
               result: next,
             };
           case PARAMETER_CONSTANT.QUERY:
             return extraParams.queryKey
               ? {
                   index,
-                  pipes: mergePipes,
+                  pipes: _mergePipes,
                   type: PARAMETER_CONSTANT.QUERY,
                   data: extraParams.queryKey,
                   result: req.query[extraParams.queryKey],
                 }
               : {
                   index,
-                  pipes: mergePipes,
+                  pipes: _mergePipes,
                   type: PARAMETER_CONSTANT.QUERY,
                   result: req.query,
                 };
@@ -964,38 +1052,38 @@ export class NestApplication {
             return extraParams.headerKey
               ? {
                   index,
-                  pipes: mergePipes,
+                  pipes: _mergePipes,
                   result: req.headers[extraParams.headerKey],
                 }
               : {
                   index,
-                  pipes: mergePipes,
+                  pipes: _mergePipes,
                   result: req.headers,
                 };
           case PARAMETER_CONSTANT.IP:
             return {
               index,
-              pipes: mergePipes,
+              pipes: _mergePipes,
               result: req.ip,
             };
           case PARAMETER_CONSTANT.SESSION:
             return {
               index,
-              pipes: mergePipes,
+              pipes: _mergePipes,
               result: req.session,
             };
           case PARAMETER_CONSTANT.PARAM:
             return extraParams.paramKey
               ? {
                   index,
-                  pipes: mergePipes,
+                  pipes: _mergePipes,
                   type: PARAMETER_CONSTANT.PARAM,
                   data: extraParams.paramKey,
                   result: req.params[extraParams.paramKey],
                 }
               : {
                   index,
-                  pipes: mergePipes,
+                  pipes: _mergePipes,
                   type: PARAMETER_CONSTANT.PARAM,
                   result: req.params,
                 };
@@ -1003,14 +1091,14 @@ export class NestApplication {
             return extraParams.bodyKey
               ? {
                   index,
-                  pipes: mergePipes,
+                  pipes: _mergePipes,
                   type: PARAMETER_CONSTANT.BODY,
                   data: extraParams.bodyKey,
                   result: req.body[extraParams.bodyKey],
                 }
               : {
                   index,
-                  pipes: mergePipes,
+                  pipes: _mergePipes,
                   type: PARAMETER_CONSTANT.BODY,
                   result: req.body,
                 };

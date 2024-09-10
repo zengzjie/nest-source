@@ -15,6 +15,7 @@ import {
   ParseEnumPipe,
   UsePipes,
   UseGuards,
+  UseInterceptors
 } from "@nestjs/common";
 import {
   CatsService,
@@ -34,6 +35,7 @@ import { CreateUserDto } from "./cats/create-user.dto";
 import { Roles as SetRoles } from "./user/role";
 import { AuthGuard } from "./auth/auth.guard";
 import { CreateDecoratorRole } from "./user/create-decorator-role";
+import { Logger1Interceptor, Logger2Interceptor, Logger3Interceptor, Logger4Interceptor } from "./interceptor";
 
 enum Roles {
   USER = "user",
@@ -41,6 +43,8 @@ enum Roles {
 }
 
 @Controller()
+// @UseInterceptors(Logger3Interceptor)
+// @UseInterceptors(Logger4Interceptor)
 // @UseFilters(CustomExceptionFilter)
 class AppController {
   constructor(
@@ -160,6 +164,15 @@ class AppController {
   @CreateDecoratorRole(["admin", "fairy"])
   handleGuardsRole(@Query("role") role: string): string {
     return `Access is only granted with specific roles: ${role}`;
+  }
+
+  @Get("interceptorPay")
+  @UseInterceptors(Logger1Interceptor)
+  @UseInterceptors(Logger2Interceptor)
+  handleInterceptorPay(@Query('id', ParseIntPipe) id: number): string {
+    console.log(`this is id: ${id}`);
+    
+    return `this action is intercepted by PayInterceptor -> ${id}`;
   }
 }
 

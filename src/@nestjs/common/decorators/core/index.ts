@@ -9,3 +9,4 @@ export * from './exception-filters.decorator';
 export * from './use-pipes.decorator';
 export * from './use-guards.decorator';
 export * from './set-metadata.decorator';
+export * from './use-interceptors.decorator';

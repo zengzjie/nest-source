@@ -13,11 +13,12 @@ import { CreateDynamicModule } from "./dynamicModule/dynamic.module";
 import { DogsService } from "./cats/cats.service";
 import { LoggerMiddleware } from "./middleware/logger.middleware";
 import { AppService } from "./app.service";
-import { APP_FILTER, APP_GUARD, APP_PIPE } from "@nestjs/core";
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from "@nestjs/core";
 import { CustomExceptionFilter } from "./filter/custom-exception.filter";
 import { AuthMiddleware } from "./auth/auth.middleware";
 import { AuthGuard } from "./auth/auth.guard";
 import { CreateDecoratorAuth } from "./auth/create-decorator-auth.guard";
+import { Logger5Interceptor, Logger6Interceptor } from "./interceptor";
 
 function LoggerMiddleware1 (req, res, next) {
   console.log("LoggerMiddleware1 before");
@@ -50,7 +51,15 @@ function LoggerMiddleware2 (req, res, next) {
     {
       provide: APP_GUARD,
       useClass: CreateDecoratorAuth
-    }
+    },
+    // {
+    //   provide: APP_INTERCEPTOR,
+    //   useClass: Logger6Interceptor
+    // },
+    // {
+    //   provide: APP_INTERCEPTOR,
+    //   useClass: Logger5Interceptor
+    // }
   ],
 })
 class AppModule implements NestModule {
