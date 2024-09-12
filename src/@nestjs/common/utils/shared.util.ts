@@ -8,6 +8,7 @@ const isNil = (val) => isUndefined(val) || val === null;
 const isObject = (val) =>
   !isNil(val) && typeof val === "object" && !Array.isArray(val);
 const isEmptyObject = (obj) => Object.keys(obj).length === 0;
+const isEmpty = (array) => !(array && array.length > 0);
 
 const isClass = (fn) => {
   if (typeof fn !== "function") {
@@ -70,6 +71,7 @@ export {
   isObject,
   isModule,
   isClass,
+  isEmpty,
   isPlainObject,
   isEmptyObject,
 };

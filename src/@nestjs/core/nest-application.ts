@@ -432,9 +432,12 @@ export class NestApplication {
       token = provider;
     }
     // 如果实例池里已经有此 token 对应的实例了
-    if (this.providerInstances.has(token) && !["APP_FILTER", "APP_PIPE", "APP_GUARD", "APP_INTERCEPTOR"].includes(
-      (provider as ClassProvider).provide as string
-    )) {
+    if (
+      this.providerInstances.has(token) &&
+      !["APP_FILTER", "APP_PIPE", "APP_GUARD", "APP_INTERCEPTOR"].includes(
+        (provider as ClassProvider).provide as string
+      )
+    ) {
       // 如果 providers 里已经有这个 token 了，则无需再次注册
       if (!providers.has(token)) {
         providers.add(token);
@@ -659,16 +662,26 @@ export class NestApplication {
   private async callInterceptors(
     controller,
     method,
-    args,
     interceptors,
-    context
+    context,
+    host,
+    pipes
   ) {
     const nextCallback = (i = 0): Observable<any> => {
       if (i >= interceptors.length) {
-        const result = method.call(controller, ...args) as
-          | Promise<string>
-          | string;
-        return result instanceof Promise ? from(result) : of(result);
+        // 使用 rxjs 的 from 方法将 Promise 转换为 Observable, 在使用 mergeMap 将 Observable 转成值
+        return from(
+          this.resolveParams(controller, method.name, host, pipes)
+        ).pipe(
+          mergeMap((args) => {
+            console.log(args, '🤯args');
+            
+            const result = method.call(controller, ...args) as
+              | Promise<string>
+              | string;
+            return result instanceof Promise ? from(result) : of(result);
+          })
+        );
       }
       const next = {
         handle: () => nextCallback(i + 1),
@@ -831,20 +844,21 @@ export class NestApplication {
             try {
               // 在执行完中间件逻辑后校验守卫
               await this.callGuards(mergeGuards, context);
-              const args = await this.resolveParams(
-                controllerPrototype,
-                methodName,
-                host as any,
-                mergePipes
-              );
+              // const args = await this.resolveParams(
+              //   controllerPrototype,
+              //   methodName,
+              //   host as any,
+              //   mergePipes
+              // );
 
               (
                 await this.callInterceptors(
                   controller,
                   method,
-                  args,
                   mergeInterceptors,
-                  context
+                  context,
+                  host,
+                  mergePipes
                 )
               ).subscribe({
                 next: (result) => {
@@ -881,7 +895,8 @@ export class NestApplication {
                     res.send(result);
                   }
                 },
-                error: async error => await this.callExceptionFilters(error, host, mergeFilters)
+                error: async (error) =>
+                  await this.callExceptionFilters(error, host, mergeFilters),
               });
             } catch (error) {
               await this.callExceptionFilters(error, host, mergeFilters);
@@ -981,7 +996,7 @@ export class NestApplication {
     const req = host.switchToHttp().getRequest();
     const res = host.switchToHttp().getResponse();
     const next = host.switchToHttp().getNext();
-    const mergeParams = [];
+    const mergeParameter = [];
     const customParamsFactoryMetadata = (Reflect.getMetadata(
       ROUTE_ARGS_METADATA,
       example,
@@ -989,13 +1004,26 @@ export class NestApplication {
     ) ?? {}) as CustomParameterMetadataRecord;
     // 自定义参数工厂
     Object.keys(customParamsFactoryMetadata).map((key) => {
-      const factory = customParamsFactoryMetadata[key].factory;
-      const data = customParamsFactoryMetadata[key].data;
-      const result = factory(data, host);
-      mergeParams.push({
-        index: customParamsFactoryMetadata[key].index,
-        result,
-      });
+      if (
+        key ===
+        PARAMETER_CONSTANT.FILE + ":" + customParamsFactoryMetadata[key].index
+      ) {
+        // 获取文件上传的元数据
+        mergeParameter.push({
+          index: customParamsFactoryMetadata[key].index,
+          data: customParamsFactoryMetadata[key].data,
+          pipes: customParamsFactoryMetadata[key].pipes,
+          result: req.file,
+        });
+      } else {
+        const factory = customParamsFactoryMetadata[key].factory;
+        const data = customParamsFactoryMetadata[key].data;
+        const result = factory(data, host);
+        mergeParameter.push({
+          index: customParamsFactoryMetadata[key].index,
+          result,
+        });
+      }
     });
 
     // 获取参数的元数据
@@ -1102,6 +1130,8 @@ export class NestApplication {
                   type: PARAMETER_CONSTANT.BODY,
                   result: req.body,
                 };
+          case PARAMETER_CONSTANT.FILE:
+            break;
           // 使用 never 类型，确保所有的情况都被处理
           default:
             const n: never = factoryName;
@@ -1109,41 +1139,55 @@ export class NestApplication {
         }
       });
 
+    // 获取方法的参数类型
+    const paramtypes = Reflect.getMetadata(
+      PARAMTYPES_METADATA,
+      example,
+      methodName
+    );
+
     if (isEmptyObject(customParamsFactoryMetadata)) {
-      // 获取方法的参数类型
-      const paramtypes = Reflect.getMetadata(
-        PARAMTYPES_METADATA,
-        example,
-        methodName
-      );
-
       // 通过 Promise.all 来并发处理方法的参数装饰器结果
-      return Promise.all(
-        parameterResult.map(async (param) => {
-          let result: any;
-
-          // 如果参数装饰器中有 pipes, 则需要先将参数装饰器结果值传入管道中依次处理
-          for (let pipe of param.pipes) {
-            if (isObject(result) && typeof result.then === "function") {
-              result = await result;
-            }
-            const pipeInstance: PipeTransform = this.getPipeInstance(pipe);
-            // 传入管道接口方法 transform 需要的参数（value, metadata）,得到最终的处理结果并返回到方法的参数中
-            result = pipeInstance.transform(result ?? param.result, {
-              type: (param.type?.toLocaleLowerCase() as ParamType) ?? "custom",
-              metatype: paramtypes[param.index],
-              data: param.data ?? void 0,
-            });
-          }
-          return result;
-        })
+      return this.concurrentParameterDecoratorResult(
+        parameterResult,
+        paramtypes
       );
     } else {
-      const sortedParams = [...mergeParams, ...parameterResult]
+      const sortedParameter = [...mergeParameter, ...parameterResult]
         ?.sort((a, b) => a.index - b.index)
         .filter(Boolean);
-      return sortedParams?.map((param) => param?.result);
+      return this.concurrentParameterDecoratorResult(
+        sortedParameter,
+        paramtypes
+      );
     }
+  }
+
+  private concurrentParameterDecoratorResult(parameters, paramtypes) {
+    return Promise.all(
+      parameters.map(async (param) => {
+        let result: any;
+        if (param.pipes.length === 0) {
+          result = param.result;
+          return result;
+        }
+
+        // 如果参数装饰器中有 pipes, 则需要先将参数装饰器结果值传入管道中依次处理
+        for (let pipe of param.pipes) {
+          if (isObject(result) && typeof result.then === "function") {
+            result = await result;
+          }
+          const pipeInstance: PipeTransform = this.getPipeInstance(pipe);
+          // 传入管道接口方法 transform 需要的参数（value, metadata）,得到最终的处理结果并返回到方法的参数中
+          result = await pipeInstance.transform(result ?? param.result, {
+            type: (param.type?.toLocaleLowerCase() as ParamType) ?? "custom",
+            metatype: paramtypes[param.index],
+            data: param.data ?? void 0,
+          });
+        }
+        return result;
+      })
+    );
   }
 
   // 注册中间件

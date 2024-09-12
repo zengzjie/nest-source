@@ -36,5 +36,6 @@ export {
   ExceptionFilter,
   CanActivate,
   CallHandler,
-  NestInterceptor
+  NestInterceptor,
+  ArgumentMetadata
 } from "./interfaces";

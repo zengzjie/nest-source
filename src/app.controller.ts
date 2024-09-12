@@ -15,7 +15,11 @@ import {
   ParseEnumPipe,
   UsePipes,
   UseGuards,
-  UseInterceptors
+  UseInterceptors,
+  UploadedFile,
+  ParseFilePipe,
+  MaxFileSizeValidator,
+  FileTypeValidator,
 } from "@nestjs/common";
 import {
   CatsService,
@@ -35,7 +39,14 @@ import { CreateUserDto } from "./cats/create-user.dto";
 import { Roles as SetRoles } from "./user/role";
 import { AuthGuard } from "./auth/auth.guard";
 import { CreateDecoratorRole } from "./user/create-decorator-role";
-import { Logger1Interceptor, Logger2Interceptor, Logger3Interceptor, Logger4Interceptor } from "./interceptor";
+import {
+  Logger1Interceptor,
+  Logger2Interceptor,
+  Logger3Interceptor,
+  Logger4Interceptor,
+} from "./interceptor";
+import { FileInterceptor } from "@nestjs/platform-express";
+import { FileSizeValidationPipe } from "./pipes/file-size-validation.pipe";
 
 enum Roles {
   USER = "user",
@@ -169,10 +180,46 @@ class AppController {
   @Get("interceptorPay")
   @UseInterceptors(Logger1Interceptor)
   @UseInterceptors(Logger2Interceptor)
-  handleInterceptorPay(@Query('id', ParseIntPipe) id: number): string {
+  handleInterceptorPay(@Query("id", ParseIntPipe) id: number): string {
     console.log(`this is id: ${id}`);
-    
+
     return `this action is intercepted by PayInterceptor -> ${id}`;
+  }
+
+  @Post("upload/file")
+  @UseInterceptors(FileInterceptor("file")) // FileInterceptor 作用是把文件信息保存到 req.file
+  handleUploadFile(
+    @UploadedFile(FileSizeValidationPipe) file: Express.Multer.File
+  ) {
+    console.log(
+      "\n 🎯-> checked AppController checked handleUploadFile checked file: 📮 --- 📮",
+      file
+    );
+    return {
+      originalname: file.originalname,
+      size: file.size,
+    };
+  }
+
+  @Post("upload/file/validate")
+  @UseInterceptors(FileInterceptor("file"))
+  handleUploadFileValidate(
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [
+          new MaxFileSizeValidator({ maxSize: 1024 * 500, message: (maxSize) => {
+            return `File size should not exceed ${maxSize / 1024} KB`;
+          } }),
+          new FileTypeValidator({ fileType: /^image\/(png|jpg|jpeg)$/ }),
+        ],
+      })
+    )
+    file: Express.Multer.File
+  ) {
+    return {
+      originalname: file.originalname,
+      size: file.size,
+    };
   }
 }
 

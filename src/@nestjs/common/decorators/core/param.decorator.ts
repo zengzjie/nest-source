@@ -7,8 +7,8 @@ import { ParamData } from "..";
 import { CustomParamFactory, PipeTransform, Type } from "../../interfaces";
 import { ParametersMetadata, ResConfiguration } from "../../interfaces/params";
 import { assignCustomParameterMetadata } from "../../utils/assign-custom-metadata.util";
-import { isNil } from "../../utils/shared.util";
-import { nanoid } from "nanoid";
+import { isNil, isString } from "../../utils/shared.util";
+import { uid } from "@nestjs/common/utils/uid.util";
 
 type ParamDecoratorEnhancer = ParameterDecorator;
 
@@ -33,7 +33,7 @@ export function createParamDecoratorFactory(
         index: parameterIndex,
         factoryName,
         extraParams,
-        pipes
+        pipes,
       };
 
       Reflect.defineMetadata(
@@ -64,8 +64,12 @@ export function createParamDecorator<
 ) => ParameterDecorator {
   // dataOrPipes 是一个数组，第一个是 data，后面的是 pipes
   return (data, ...pipes) => {
-    const paramType = nanoid(21);
-    return (target: any, propertyKey: string, parameterIndex: number) => {
+    const paramtype = uid(21);
+    return (
+      target: any,
+      propertyKey: string | symbol,
+      parameterIndex: number
+    ) => {
       // 获取参数的元数据
       const args =
         Reflect.getMetadata(ROUTE_ARGS_METADATA, target, propertyKey) || {};
@@ -80,7 +84,7 @@ export function createParamDecorator<
         ROUTE_ARGS_METADATA,
         assignCustomParameterMetadata(
           args,
-          paramType,
+          paramtype,
           parameterIndex,
           factory,
           paramData
@@ -95,6 +99,48 @@ export function createParamDecorator<
     };
   };
 }
+
+const assignMetadata = <TParamtype = any, TArgs = any>(args: TArgs, paramtype: TParamtype, index: number, data: ParamData, ...pipes: (Type<PipeTransform> | PipeTransform)[]): TArgs & {
+  [x: string]: {
+    index: number;
+    data: ParamData;
+    pipes: (PipeTransform<any, any> | Type<PipeTransform<any, any>>)[];
+  }
+} => {
+  return {
+    ...args,
+    [`${paramtype}:${index}`]: {
+      index,
+      data,
+      pipes,
+    },
+  };
+};
+
+const createPipesRouteParamDecorator =
+  (
+    paramtype: string
+  ): ((
+    data: string | (Type<PipeTransform> | PipeTransform), ...pipes: (Type<PipeTransform> | PipeTransform)[]
+  ) => ParameterDecorator) =>
+  (data, ...pipes) =>
+  (target: Object, propertyKey: string | symbol, parameterIndex: number) => {
+    const args =
+      Reflect.getMetadata(
+        ROUTE_ARGS_METADATA,
+        target,
+        propertyKey
+      ) ?? {};
+    const hasParamData = isNil(data) || isString(data);
+    const paramData = hasParamData ? data : void 0;
+    const paramPipes = hasParamData ? pipes : [data, ...pipes];
+    Reflect.defineMetadata(
+      ROUTE_ARGS_METADATA,
+      assignMetadata(args, paramtype, parameterIndex, paramData, ...paramPipes),
+      target,
+      propertyKey
+    );
+  };
 
 export const Request = createParamDecoratorFactory(PARAMETER_CONSTANT.REQUEST);
 export const Req = createParamDecoratorFactory(PARAMETER_CONSTANT.REQ);
@@ -117,3 +163,10 @@ export const Param = (paramKey?: string, ...pipes) =>
   createParamDecoratorFactory(PARAMETER_CONSTANT.PARAM)({ paramKey }, pipes);
 export const Body = (bodyKey?: string, ...pipes) =>
   createParamDecoratorFactory(PARAMETER_CONSTANT.BODY)({ bodyKey }, pipes);
+
+export function UploadedFile(): ParameterDecorator;
+export function UploadedFile(...pipes: (Type<PipeTransform> | PipeTransform)[]): ParameterDecorator;
+export function UploadedFile(fileKey?: string, ...pipes: (Type<PipeTransform> | PipeTransform)[]): ParameterDecorator;
+export function UploadedFile(fileKey?: string | (Type<PipeTransform> | PipeTransform), ...pipes: (Type<PipeTransform> | PipeTransform)[]): ParameterDecorator {
+  return createPipesRouteParamDecorator(PARAMETER_CONSTANT.FILE)(fileKey, ...pipes);
+}
