@@ -544,6 +544,7 @@ export class NestApplication {
 
     console.log(
       this.moduleProviders,
+      this.providerInstances,
       this.globalProviders,
       token,
       "this.moduleProviders ======> this.moduleProviders"
@@ -674,8 +675,8 @@ export class NestApplication {
           this.resolveParams(controller, method.name, host, pipes)
         ).pipe(
           mergeMap((args) => {
-            console.log(args, '🤯args');
-            
+            console.log(args, "🤯args");
+
             const result = method.call(controller, ...args) as
               | Promise<string>
               | string;
@@ -688,6 +689,7 @@ export class NestApplication {
       };
       const interceptor = interceptors[i];
       const instance = this.getInterceptorInstance(interceptor);
+      console.log(instance, 'interceptors =====>interceptors');
       const result = instance.intercept(context, next) as
         | Observable<any>
         | Promise<Observable<any>>;
@@ -1004,16 +1006,16 @@ export class NestApplication {
     ) ?? {}) as CustomParameterMetadataRecord;
     // 自定义参数工厂
     Object.keys(customParamsFactoryMetadata).map((key) => {
+      const matched = key.match(/^Files?/);
       if (
-        key ===
-        PARAMETER_CONSTANT.FILE + ":" + customParamsFactoryMetadata[key].index
+        !!matched
       ) {
         // 获取文件上传的元数据
         mergeParameter.push({
           index: customParamsFactoryMetadata[key].index,
           data: customParamsFactoryMetadata[key].data,
           pipes: customParamsFactoryMetadata[key].pipes,
-          result: req.file,
+          result: !!matched && req[matched[0].toLocaleLowerCase()],
         });
       } else {
         const factory = customParamsFactoryMetadata[key].factory;
@@ -1131,6 +1133,8 @@ export class NestApplication {
                   result: req.body,
                 };
           case PARAMETER_CONSTANT.FILE:
+            break;
+          case PARAMETER_CONSTANT.FILES:
             break;
           // 使用 never 类型，确保所有的情况都被处理
           default:

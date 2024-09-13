@@ -20,6 +20,7 @@ import {
   ParseFilePipe,
   MaxFileSizeValidator,
   FileTypeValidator,
+  UploadedFiles,
 } from "@nestjs/common";
 import {
   CatsService,
@@ -45,7 +46,7 @@ import {
   Logger3Interceptor,
   Logger4Interceptor,
 } from "./interceptor";
-import { FileInterceptor } from "@nestjs/platform-express";
+import { FileInterceptor, FilesInterceptor, FileFieldsInterceptor, AnyFilesInterceptor, NoFilesInterceptor } from "@nestjs/platform-express";
 import { FileSizeValidationPipe } from "./pipes/file-size-validation.pipe";
 
 enum Roles {
@@ -59,15 +60,15 @@ enum Roles {
 // @UseFilters(CustomExceptionFilter)
 class AppController {
   constructor(
-    private coreService: CoreService,
-    private commonService: CommonService,
-    private catsService: CatsService,
-    private dogsService: DogsService,
-    @Inject("PigService") private pig: PigService,
-    @Inject("FactoryToken") private factoryService: UseFactory,
-    @Inject("PREFIX") private prefix: string,
-    @Inject("FOOT") private foot: string
-  ) {}
+    // private coreService: CoreService,
+    // private commonService: CommonService,
+    // private catsService: CatsService,
+    private dogsService: DogsService
+  ) // @Inject("PigService") private pig: PigService,
+  // @Inject("FactoryToken") private factoryService: UseFactory,
+  // @Inject("PREFIX") private prefix: string,
+  // @Inject("FOOT") private foot: string,
+  {}
 
   // @Inject()
   // private pig: string;
@@ -97,7 +98,8 @@ class AppController {
 
   @Get("cat")
   handleCat(): string {
-    return this.catsService.eat();
+    // return this.catsService.eat();
+    return "";
   }
 
   @Get("dog")
@@ -107,26 +109,30 @@ class AppController {
 
   @Get("factory")
   handleFactory(): string {
-    console.log(this.pig.eat(), "这是🐷的实例");
+    // console.log(this.pig.eat(), "这是🐷的实例");
 
-    return this.factoryService.log();
+    // return this.factoryService.log();
+    return "";
   }
 
   @Get("common")
   handleCommon(): string {
-    return this.commonService.log();
+    // return this.commonService.log();
+    return "";
   }
 
   @Get("core")
   handleCore(): string {
-    return this.coreService.log();
+    // return this.coreService.log();
+    return "";
   }
 
   @Get("dynamic")
   handleDynamic(): string {
     console.log(this.dogsService, "this.dogsService");
 
-    return this.dogsService.eat() + " Dynamic Module " + this.foot;
+    // return this.dogsService.eat() + " Dynamic Module " + this.foot;
+    return "";
   }
 
   @Get("config")
@@ -207,9 +213,12 @@ class AppController {
     @UploadedFile(
       new ParseFilePipe({
         validators: [
-          new MaxFileSizeValidator({ maxSize: 1024 * 500, message: (maxSize) => {
-            return `File size should not exceed ${maxSize / 1024} KB`;
-          } }),
+          new MaxFileSizeValidator({
+            maxSize: 1024 * 500,
+            message: (maxSize) => {
+              return `File size should not exceed ${maxSize / 1024} KB`;
+            },
+          }),
           new FileTypeValidator({ fileType: /^image\/(png|jpg|jpeg)$/ }),
         ],
       })
@@ -220,6 +229,42 @@ class AppController {
       originalname: file.originalname,
       size: file.size,
     };
+  }
+
+  @Post("upload/files")
+  @UseInterceptors(FilesInterceptor("files")) // FilesInterceptor 作用是把文件信息保存到 req.file
+  handleUploadFiles(@UploadedFiles() files: Express.Multer.File[]) {
+    return "success";
+  }
+
+  @Post("upload/file-fields")
+  @UseInterceptors(FileFieldsInterceptor([
+    { name: 'avatar', maxCount: 1 },
+    { name: 'background', maxCount: 1 }
+  ]))
+  handleUploadFileFields(@UploadedFiles() files: { avatar?: Express.Multer.File[]; background?: Express.Multer.File[]; }) {
+    console.log(files.avatar, "files.avatar");
+    console.log(files.background, "files.background");
+    
+    return "success";
+  }
+
+  @Post("upload/any-files")
+  @UseInterceptors(AnyFilesInterceptor())
+  handleUploadAnyFiles(@UploadedFiles() files: Express.Multer.File[]) {
+    return "success";
+  }
+
+  @Post("upload/no-files")
+  @UseInterceptors(NoFilesInterceptor())
+  // @UseInterceptors(FileInterceptor('file'))
+  // @UseInterceptors(FilesInterceptor('files', 2))
+  // @UseInterceptors(FileFieldsInterceptor([
+  //   { name: 'avatar', maxCount: 1 },
+  //   { name: 'background', maxCount: 1 }
+  // ]))
+  handleUploadNoFiles() {
+    return "success";
   }
 }
 

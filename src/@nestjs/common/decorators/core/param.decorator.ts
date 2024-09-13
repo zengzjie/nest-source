@@ -170,3 +170,9 @@ export function UploadedFile(fileKey?: string, ...pipes: (Type<PipeTransform> | 
 export function UploadedFile(fileKey?: string | (Type<PipeTransform> | PipeTransform), ...pipes: (Type<PipeTransform> | PipeTransform)[]): ParameterDecorator {
   return createPipesRouteParamDecorator(PARAMETER_CONSTANT.FILE)(fileKey, ...pipes);
 }
+
+export function UploadedFiles(): ParameterDecorator;
+export function UploadedFiles(...pipes: (Type<PipeTransform> | PipeTransform)[]): ParameterDecorator;
+export function UploadedFiles(...pipes: (Type<PipeTransform> | PipeTransform)[]) {
+  return createPipesRouteParamDecorator(PARAMETER_CONSTANT.FILES)(undefined, ...pipes);
+}

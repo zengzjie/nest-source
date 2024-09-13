@@ -10,5 +10,6 @@ export enum PARAMETER_CONSTANT {
   RES = "Res",
   RESPONSE = "Response",
   NEXT = "Next",
-  FILE= "File",
+  FILE = "File",
+  FILES = "Files"
 }
