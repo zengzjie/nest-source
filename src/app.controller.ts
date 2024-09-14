@@ -176,9 +176,9 @@ class AppController {
   }
 
   @Get("guardsRole")
-  // @UseGuards(AuthGuard)
-  // @SetRoles("admin", "fairy")
-  @CreateDecoratorRole(["admin", "fairy"])
+  @UseGuards(AuthGuard)
+  @SetRoles("admin", "fairy")
+  // @CreateDecoratorRole(["admin", "fairy"])
   handleGuardsRole(@Query("role") role: string): string {
     return `Access is only granted with specific roles: ${role}`;
   }
@@ -197,10 +197,6 @@ class AppController {
   handleUploadFile(
     @UploadedFile(FileSizeValidationPipe) file: Express.Multer.File
   ) {
-    console.log(
-      "\n 🎯-> checked AppController checked handleUploadFile checked file: 📮 --- 📮",
-      file
-    );
     return {
       originalname: file.originalname,
       size: file.size,

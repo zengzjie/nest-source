@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { CustomDecorator, SetMetadata, Type } from '../common';
 import { uid } from '@nestjs/common/utils/uid.util';
+import { Global } from '@nestjs/common';
 
 export type CreateDecoratorOptions<TParam = any, TTransformed = TParam> = {
     /**
@@ -22,6 +23,7 @@ export type ReflectableDecorator<TParam, TTransformed = TParam> = ((opts?: TPara
     KEY: string;
 };
 
+@Global()
 export class Reflector {
     static createDecorator<TParam>(options?: CreateDecoratorOptions<TParam>): ReflectableDecorator<TParam>
     static createDecorator<TParam, TTransformed>(options: CreateDecoratorWithTransformOptions<TParam, TTransformed>): ReflectableDecorator<TParam, TTransformed>

@@ -337,10 +337,6 @@ export class NestApplication {
     module: Type | Promise<DynamicModule> | ForwardReference<any>,
     ...parentModules: (Type | Promise<DynamicModule> | ForwardReference<any>)[]
   ) {
-    // 拿到模块里的所有导入的模块
-    // const importedModules =
-    //   Reflect.getMetadata(MODULE_METADATA.IMPORTS, module) ?? [];
-    const global = Reflect.getMetadata(GLOBAL_MODULE_METADATA, module);
     // 拿到模块里的所有导入的服务
     const importedProviders =
       Reflect.getMetadata(MODULE_METADATA.PROVIDERS, module) ?? [];
@@ -358,7 +354,7 @@ export class NestApplication {
     importedProviders.forEach((provider) => {
       if (isValueProvider(provider)) {
         [module, ...parentModules].forEach((m) => {
-          this.addProvider(provider, m, global);
+          this.addProvider(provider, m);
         });
       }
     });
@@ -386,7 +382,7 @@ export class NestApplication {
             provider.provide === exportedProvider
           ) {
             [module, ...parentModules].forEach((m) => {
-              this.addProvider(provider, m, global);
+              this.addProvider(provider, m);
             });
           }
         });
@@ -398,9 +394,11 @@ export class NestApplication {
 
   private addProvider(
     provider: Provider,
-    module: Type | Promise<DynamicModule> | ForwardReference<any>,
-    global = false
+    module: Type | Promise<DynamicModule> | ForwardReference<any>
   ) {
+    const global = Reflect.getMetadata(GLOBAL_MODULE_METADATA, module) ?? false;
+    console.log(provider, global, "⚠️ sf");
+    
     // 需要将每个 provider 注册到对应的模块里去
     // providers 在 global 为 true 时，就是 this.globalProviders (Set)
     // providers 在 global 为 false 时，就是 module 对应的 this.moduleProviders (Map)
@@ -689,7 +687,6 @@ export class NestApplication {
       };
       const interceptor = interceptors[i];
       const instance = this.getInterceptorInstance(interceptor);
-      console.log(instance, 'interceptors =====>interceptors');
       const result = instance.intercept(context, next) as
         | Observable<any>
         | Promise<Observable<any>>;
@@ -701,7 +698,7 @@ export class NestApplication {
   }
 
   private initDefaultProviders() {
-    this.addProvider(Reflector, this.module, true);
+    this.addProvider(Reflector, Reflector);
   }
 
   // 配置初始化工作

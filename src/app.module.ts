@@ -19,6 +19,7 @@ import { AuthMiddleware } from "./auth/auth.middleware";
 import { AuthGuard } from "./auth/auth.guard";
 import { CreateDecoratorAuth } from "./auth/create-decorator-auth.guard";
 import { Logger5Interceptor, Logger6Interceptor } from "./interceptor";
+import { MulterModule } from "@nestjs/platform-express";
 
 function LoggerMiddleware1 (req, res, next) {
   console.log("LoggerMiddleware1 before");
@@ -35,6 +36,9 @@ function LoggerMiddleware2 (req, res, next) {
     CreateDynamicModule.forRoot({
       apiKey: "base_main",
     }),
+    MulterModule.register({
+      dest: './upload'
+    })
   ],
   controllers: [AppController, UserController],
   // imports 中的 providers 如果需要用到其他模块或者服务，需要在这里先注册了，才能在 imports 中使用

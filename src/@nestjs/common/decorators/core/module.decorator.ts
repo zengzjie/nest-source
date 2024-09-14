@@ -32,7 +32,7 @@ export function Module(metadata: ModuleMetadata): ClassDecorator {
       target
     );
     const providers = metadata.providers
-      .map((provider) =>
+      ?.map((provider) =>
         provider instanceof Function
           ? provider
           : (provider as ClassProvider).useClass
