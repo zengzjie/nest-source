@@ -280,6 +280,9 @@ export class NestApplication {
             controllers = [],
             exports = [],
           } = importedModuleSubset;
+          // 动态模块的 providers, controllers 需要合并到其当前模块的命名空间中
+          defineNameSpaceModule(dynamicModule, providers);
+          defineNameSpaceModule(dynamicModule, controllers);
           // 如果是动态模块则需要将动态模块里的 providers, controllers, exports 跟当前 @Module 装饰器中的 providers, controllers, exports 合并
           const oldImports =
             Reflect.getMetadata(MODULE_METADATA.IMPORTS, dynamicModule) ?? [];
@@ -350,22 +353,21 @@ export class NestApplication {
       this.initProviders(module);
     }
 
-    // useValue 比较特殊，不需要手动导出去进行注入
-    importedProviders.forEach((provider) => {
-      if (isValueProvider(provider)) {
+    for (const importedProvider of importedProviders) {
+      const providerToken = importedProvider.provide ?? importedProvider;
+      if (exports.includes(providerToken)) {
+        // 如果导出的服务和导入的服务 token 相等，则注册到自己的模块和父模块中
         [module, ...parentModules].forEach((m) => {
-          this.addProvider(provider, m);
+          this.addProvider(importedProvider, m);
         });
+      } else {
+        // 如果导出的服务和导入的服务 token 不相等，则只注册到自己的模块中
+        this.addProvider(importedProvider, module);
       }
-    });
-
-    // if (exports.length === 0) {
-    // 如果没有导出服务，则手动导出所有导入的服务
-    // exports.push(...importedProviders);
-    // }
+    }
 
     // 根据导出服务判断其是否是模块，如果是模块则递归解析其 @Module 装饰器中的 providers
-    for (let exportedProvider of exports) {
+    for (const exportedProvider of exports) {
       if (isModule(exportedProvider)) {
         // 递归初始化
         this.registerProvidersFromModule(
@@ -373,19 +375,6 @@ export class NestApplication {
           module,
           ...parentModules
         );
-      } else {
-        // 如果不是模块，则把导出的服务和导入的服务进行对比，只有 token 相等的时候才会注册
-        // 这里的 useValue 比较特殊，不需要手动导出去进行注入
-        importedProviders.forEach((provider) => {
-          if (
-            provider === exportedProvider ||
-            provider.provide === exportedProvider
-          ) {
-            [module, ...parentModules].forEach((m) => {
-              this.addProvider(provider, m);
-            });
-          }
-        });
       }
     }
 
@@ -397,8 +386,6 @@ export class NestApplication {
     module: Type | Promise<DynamicModule> | ForwardReference<any>
   ) {
     const global = Reflect.getMetadata(GLOBAL_MODULE_METADATA, module) ?? false;
-    console.log(provider, global, "⚠️ sf");
-    
     // 需要将每个 provider 注册到对应的模块里去
     // providers 在 global 为 true 时，就是 this.globalProviders (Set)
     // providers 在 global 为 false 时，就是 module 对应的 this.moduleProviders (Map)
@@ -544,6 +531,7 @@ export class NestApplication {
       this.moduleProviders,
       this.providerInstances,
       this.globalProviders,
+      module,
       token,
       "this.moduleProviders ======> this.moduleProviders"
     );
@@ -710,7 +698,7 @@ export class NestApplication {
       Reflect.getMetadata(MODULE_METADATA.CONTROLLERS, module) ?? [];
     // 初始化模块的依赖
     Logger.log(
-      `${this.module.name} dependencies initialized`,
+      `${module.name} dependencies initialized`,
       "InstanceLoader"
     );
     /**
@@ -738,13 +726,13 @@ export class NestApplication {
       const controllerInterceptors =
         Reflect.getMetadata(INTERCEPTORS_METADATA, Controller) ?? [];
       // 把控制器过滤器放到模块的命名空间中
-      defineNameSpaceModule(this.module, controllerFilters);
+      defineNameSpaceModule(module, controllerFilters);
       // 把控制器管道放到模块的命名空间中
-      defineNameSpaceModule(this.module, controllerPipes);
+      defineNameSpaceModule(module, controllerPipes);
       // 把控制器守卫放到模块的命名空间中
-      defineNameSpaceModule(this.module, controllerGuards);
+      defineNameSpaceModule(module, controllerGuards);
       // 把控制器拦截器放到模块的命名空间中
-      defineNameSpaceModule(this.module, controllerInterceptors);
+      defineNameSpaceModule(module, controllerInterceptors);
       // 开始解析路由
       Logger.log(`${Controller.name} {${prefix}}:`, "RoutesResolver");
 
@@ -792,13 +780,13 @@ export class NestApplication {
         const methodInterceptors =
           Reflect.getMetadata(INTERCEPTORS_METADATA, method) ?? [];
         // 把方法过滤器放到模块的命名空间中
-        defineNameSpaceModule(this.module, methodFilters);
+        defineNameSpaceModule(module, methodFilters);
         // 把方法管道放到模块的命名空间中
-        defineNameSpaceModule(this.module, methodPipes);
+        defineNameSpaceModule(module, methodPipes);
         // 把方法守卫放到模块的命名空间中
-        defineNameSpaceModule(this.module, methodGuards);
+        defineNameSpaceModule(module, methodGuards);
         // 把方法拦截器放到模块的命名空间中
-        defineNameSpaceModule(this.module, methodInterceptors);
+        defineNameSpaceModule(module, methodInterceptors);
 
         const mergeFilters = [...controllerFilters, ...methodFilters];
         const mergePipes = [
@@ -1004,9 +992,7 @@ export class NestApplication {
     // 自定义参数工厂
     Object.keys(customParamsFactoryMetadata).map((key) => {
       const matched = key.match(/^Files?/);
-      if (
-        !!matched
-      ) {
+      if (!!matched) {
         // 获取文件上传的元数据
         mergeParameter.push({
           index: customParamsFactoryMetadata[key].index,

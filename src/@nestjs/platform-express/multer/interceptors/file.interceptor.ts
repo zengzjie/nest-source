@@ -11,6 +11,7 @@ import { Observable } from "rxjs";
 import { Request, Response } from "express";
 import multer from "multer";
 import { MULTER_MODULE_OPTIONS } from "../files.constants";
+import { MulterService } from "../multer.service";
 
 export const FileInterceptor = (
   fieldName: string,
@@ -19,14 +20,15 @@ export const FileInterceptor = (
   @Injectable()
   class FileInterceptor implements NestInterceptor {
     constructor(
-      @Inject(MULTER_MODULE_OPTIONS) private options?: MulterOptions
+      private multerService: MulterService,
+      @Inject(MULTER_MODULE_OPTIONS) private options?: MulterOptions // 由于 MULTER_MODULE_OPTIONS 没有导出, 这里拿到的会是 null
     ) {}
     // 实现了 NestInterceptor 接口的类，可以通过实现 intercept 方法来实现拦截器的逻辑
     async intercept(
       context: ExecutionContext,
       next: CallHandler<any>
     ): Promise<Observable<any>> {
-      const configure = Object.assign(localOptions ?? {}, this.options);
+      const configure = Object.assign(localOptions ?? {}, this.multerService.getMulterModuleOptions());
 
       const request = context.switchToHttp().getRequest<Request>();
       const response = context.switchToHttp().getResponse<Response>();

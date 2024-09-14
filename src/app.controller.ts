@@ -210,7 +210,7 @@ class AppController {
       new ParseFilePipe({
         validators: [
           new MaxFileSizeValidator({
-            maxSize: 1024 * 500,
+            maxSize: 1024 * 1024,
             message: (maxSize) => {
               return `File size should not exceed ${maxSize / 1024} KB`;
             },
